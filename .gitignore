@@ -1,0 +1,36 @@
+# Dependencies and package-manager state
+node_modules/
+.pnpm-store/
+
+# Packaged applications and installers
+dist/
+outputs/
+*.blockmap
+*.dmg
+*.exe
+*.AppImage
+*.deb
+
+# Local application data and authentication
+auth-cookies.enc
+downloads.json
+settings.json
+*.session
+*.cookie
+
+# Downloaded media and Serato data
+DJ/
+Serato Playlists/
+*.mp3
+*.wav
+*.aif
+*.aiff
+*.flac
+*.m4a
+
+# Logs, editor state, and operating-system metadata
+*.log
+.DS_Store
+.idea/
+.vscode/
+

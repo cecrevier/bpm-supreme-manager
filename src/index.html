@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self'; script-src 'self'">
+  <title>BPM Supreme Manager</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="monitor.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><img class="logo" src="assets/bpm-supreme.png" alt="BPM Supreme"><div><h1>BPM Supreme Manager</h1><small data-i18n="subtitle">Bibliothèque multiplateforme</small></div></div>
+    <div id="topDownload" class="top-download" hidden>
+      <div class="top-download-fields">
+        <span><small>GENRE</small><b id="topCategory">—</b></span>
+        <span class="top-song"><small>CHANSON</small><b id="topSong">Préparation…</b></span>
+        <em id="topCount">0/0</em>
+      </div>
+      <progress id="topProgress" value="0" max="1"></progress>
+    </div>
+    <div class="top-actions"><input id="search" class="top-search" type="search" data-i18n-placeholder="search" placeholder="Rechercher un titre…"><label class="mode-control"><span data-i18n="speed">Vitesse</span><select id="downloadMode"><option value="cautious" data-i18n="modeCautious">Prudent · 8 s</option><option value="balanced" data-i18n="modeBalanced">Équilibré · 3 s</option><option value="fast" data-i18n="modeFast">Rapide · 1 s</option></select></label><button id="settingsBtn" data-i18n="settings">⚙ Paramètres</button><span id="authBadge" class="badge offline">Non connecté</span><button id="loginBtn">Se connecter</button><button id="refreshBtn" class="icon" title="Actualiser">↻</button></div>
+  </header>
+  <main>
+    <aside>
+      <h3>Bibliothèque</h3>
+      <h3>Genres</h3>
+      <div id="categories"><button class="category active" data-id="all">Tous</button></div>
+      <div class="destination"><label data-i18n="location">Emplacement</label><div id="destinationPathSummary">À choisir dans Paramètres</div><button id="openSettingsBtn" data-i18n="openSettings">Ouvrir les paramètres…</button></div>
+    </aside>
+    <section class="collections-panel">
+      <div class="panel-head"><div><h2 id="sectionTitle">Choisissez un genre</h2><span id="collectionCount">0 titre</span></div><div class="panel-actions"><button id="categoryDownloadBtn" class="primary" hidden>Télécharger tout le genre</button></div></div>
+      <div class="versions" id="genreVersions"><strong>Versions prioritaires :</strong><span>Intro Clean</span><span>Clean Extended</span><span>Dirty Extended</span><small>Maximum 3 versions par titre; l’application complète avec les versions disponibles.</small></div>
+      <div class="legend"><span><i class="dot green"></i> Version cochée</span><span><i class="dot red"></i> Déjà téléchargé</span><span><i class="dot orange"></i> Limite atteinte</span><span>— Version non cochée</span></div>
+      <div id="collections" class="collection-grid"><div class="empty">Connectez-vous et choisissez un genre.</div></div>
+    </section>
+  </main>
+  <section id="downloadMonitor" class="download-center" hidden>
+    <div class="download-center-head">
+      <div><strong>Centre de téléchargement</strong><span id="monitorTitle">File d’attente</span><span id="monitorCount">0 tâche</span></div>
+      <div><button id="clearFinishedBtn" data-i18n="clearErrors">Effacer les erreurs</button><button id="monitorClose" title="Réduire">⌄</button></div>
+    </div>
+    <progress id="monitorProgress" value="0" max="1"></progress>
+    <div id="monitorCurrent" class="monitor-current">Aucun téléchargement</div>
+    <div class="queue-table-head"><span>État</span><span>Genre</span><span>Chanson actuelle</span><span>Progression</span></div>
+    <div id="queueRows" class="queue-rows"></div>
+    <div id="monitorLog" hidden></div>
+  </section>
+  <div id="settingsPanel" class="settings-overlay" hidden>
+    <section class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="settings-head"><div><h2 id="settingsTitle" data-i18n="settingsTitle">Paramètres</h2><p data-i18n="settingsSubtitle">Stockage, langue et organisation</p></div><button id="settingsClose" aria-label="Fermer">×</button></div>
+      <label class="settings-label" data-i18n="language">Langue</label><select id="languageSelect" class="settings-select"><option value="system" data-i18n="languageSystem">Langue du système</option><option value="fr">Français</option><option value="en">English</option><option value="es">Español</option></select>
+      <label class="settings-label" data-i18n="destination">Disque ou dossier de destination</label><div id="destinationPath" class="settings-path">Aucun</div>
+      <div class="settings-actions"><button id="destinationBtn" data-i18n="chooseDestination">Choisir un disque ou dossier…</button><button id="organizeBtn" data-i18n="organize">Classer l’existant par genre…</button></div>
+    </section>
+  </div>
+  <div id="toast" role="status"></div>
+  <script src="renderer.js"></script>
+</body>
+</html>
