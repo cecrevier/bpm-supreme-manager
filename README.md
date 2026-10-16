@@ -2,10 +2,12 @@
 
 An unofficial cross-platform desktop companion created to make BPM Supreme easier to use and to automate authorized downloads from a valid user account.
 
+**This application is exclusively for BPM Supreme members. An active, functional BPM Supreme account with access to the requested content is required.** The application cannot be used without valid membership and does not provide or unlock access on its own.
+
 The application presents the catalogue by genre, prioritizes DJ-friendly versions, avoids duplicate downloads, and keeps the resulting library ready for Serato. It runs on macOS, Windows, and Linux from one Electron codebase.
 
 > [!IMPORTANT]
-> This is not the official BPM Supreme software. It is an independent community project and is not affiliated with, endorsed by, or sponsored by BPM Supreme or BPM Music. BPM Supreme names, logos, and related trademarks belong to their respective owners. A valid BPM Supreme account and access to the requested music are required. The application does not bypass subscriptions, access controls, download limits, or copyright restrictions. Users are responsible for following BPM Supreme's terms and all applicable laws.
+> This is not the official BPM Supreme software. It is an independent community project and is not affiliated with, endorsed by, or sponsored by BPM Supreme or BPM Music. BPM Supreme names, logos, and related trademarks belong to their respective owners. This tool is reserved for BPM Supreme members and requires an active, functional account with access to the requested music. The application does not bypass subscriptions, access controls, download limits, or copyright restrictions. Users are responsible for following BPM Supreme's terms and all applicable laws.
 
 ## Why this project exists
 
