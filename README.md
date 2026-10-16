@@ -15,9 +15,9 @@ BPM Supreme Manager was built to provide a simpler desktop workflow and automate
 
 ## Screenshots
 
-### Main toolbar
+### Library and Download Center
 
-![BPM Supreme Manager main toolbar showing search, download speed, settings, account status, and refresh controls](docs/images/english-toolbar.jpg)
+![BPM Supreme Manager downloading music with the genre library, queued tracks, current song, item count, progress bar, and completion percentage](docs/images/download-center-english.png)
 
 ### Settings
 
