@@ -4,7 +4,7 @@
   "description": "Cross-platform desktop manager for organizing a licensed BPM Supreme music library",
   "main": "src/main.js",
   "author": "CECREVIER Networks",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "scripts": {
     "start": "electron .",
     "dist:mac": "electron-builder --mac dmg zip",

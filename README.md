@@ -116,5 +116,5 @@ assets/            Source artwork used for packaging
 
 ## License
 
-Copyright © 2026. All rights reserved. The source is published for inspection and personal use. No open-source license is granted at this time.
+This project is available under the [MIT License](LICENSE). Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and project guidelines.
 
