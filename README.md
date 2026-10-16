@@ -13,6 +13,16 @@ The application presents the catalogue by genre, prioritizes DJ-friendly version
 
 BPM Supreme Manager was built to provide a simpler desktop workflow and automate repetitive download and library-organization tasks. It uses the access already granted to the signed-in user and is intended as a convenience tool for legitimate subscribers—not as a replacement for an account, a way around service restrictions, or an official BPM Supreme client.
 
+## Screenshots
+
+### Main toolbar
+
+![BPM Supreme Manager main toolbar showing search, download speed, settings, account status, and refresh controls](docs/images/english-toolbar.jpg)
+
+### Settings
+
+![BPM Supreme Manager Settings screen in English with language, destination drive, and library organization controls](docs/images/english-settings.jpg)
+
 ## Highlights
 
 - Browse the available catalogue directly by genre.
