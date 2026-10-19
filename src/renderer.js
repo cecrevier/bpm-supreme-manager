@@ -3,7 +3,8 @@ const state = {
   wanted: new Set(['intro clean', 'clean extended', 'dirty extended']),
   skip: 0, pageSize: 50, hasMore: false, loading: false, albumIds: new Set(),
   queue: [], queueBusy: false, currentJob: null, queueId: 0, genreBusy: false,
-  tracksRevision: 0, recordsRevision: 0, eligibleCache: null, renderLimit: 250, downloadCenterFrame: 0, downloadCenterLastRender: 0
+  tracksRevision: 0, recordsRevision: 0, eligibleCache: null, renderLimit: 100, downloadCenterFrame: 0, downloadCenterLastRender: 0,
+  trackIds: new Set(), searchTimer: 0
 };
 
 const $ = id => document.getElementById(id);
@@ -97,7 +98,7 @@ function renderTracks() {
   const renderedTracks = visible.slice(0, state.renderLimit);
   const rows = renderedTracks.map(track => {
     const done = Boolean(state.records[String(track.id)]); const limited = track.downloadCount >= 3; const wanted = chosenIds.has(track.id);
-    const queuedSong = state.queue.flatMap(job => job.songs || []).find(song => String(song.id) === String(track.id) && !['existing', 'limited'].includes(song.status));
+    const queuedSong = state.queue.map(job => job.songById?.get(String(track.id))).find(song => song && !['existing', 'limited'].includes(song.status));
     const action = queuedSong ? `<span class="track-inline-progress" data-progress-id="${track.id}"><progress value="${queuedSong.progress}" max="100"></progress><b>${Math.round(queuedSong.progress)}%</b></span>` : `<button class="track-download" data-download-id="${track.id}" ${done || limited ? 'disabled' : ''}>${done ? '✓' : tr('download')}</button>`;
     const status = done ? tr('alreadyDownloaded') : limited ? `${tr('limited')} 3/3` : queuedSong ? tr('queued') : wanted ? `${track.downloadCount}/3 • ${tr('selected')}` : tr('unselectedVersion').replace(/^—\s*/, '');
     return `<div class="track genre-track ${done ? 'downloaded-frame' : queuedSong ? 'queued-frame' : wanted && !limited ? 'queued-frame' : ''}" data-track-id="${track.id}"><div class="${done ? 'downloaded' : limited ? 'limit' : ''}">${done ? '●' : limited ? '!' : queuedSong ? '↓' : wanted ? '↓' : '–'}</div><div><h5>${escapeHTML(track.title)}</h5><p>${escapeHTML(track.artist)} • ${escapeHTML(track.version)} • ${escapeHTML(track.genre)}</p></div><span class="${done ? 'downloaded' : limited ? 'limit' : ''}">${escapeHTML(status)}</span>${action}</div>`;
@@ -105,7 +106,7 @@ function renderTracks() {
   const more = visible.length > renderedTracks.length ? `<button class="load-more" id="loadMoreBtn">${escapeHTML(tr('loadMore'))} (${visible.length - renderedTracks.length})</button>` : '';
   $('collections').innerHTML = rows ? rows + more : `<div class="empty">${escapeHTML(tr('noTracks'))}</div>`;
   document.querySelectorAll('[data-download-id]').forEach(button => { button.onclick = () => downloadSingleTrack(Number(button.dataset.downloadId)); });
-  if ($('loadMoreBtn')) $('loadMoreBtn').onclick = () => { state.renderLimit += 250; renderTracks(); };
+  if ($('loadMoreBtn')) $('loadMoreBtn').onclick = () => { state.renderLimit += 100; renderTracks(); };
 }
 async function loadGenres() {
   $('categories').innerHTML = `<div class="empty">${escapeHTML(tr('loading'))}</div>`;
@@ -119,16 +120,16 @@ async function selectGenre(key) {
   if (!genre) return;
   state.genreBusy = true;
   state.selectedGenre = { ...genre, key: String(key), name: genre.name || genre.title };
-  state.tracks = []; state.skip = 0; state.hasMore = false; state.albumIds = new Set(); state.renderLimit = 250; state.tracksRevision += 1; state.eligibleCache = null;
+  state.tracks = []; state.skip = 0; state.hasMore = false; state.albumIds = new Set(); state.trackIds = new Set(); state.renderLimit = 100; state.tracksRevision += 1; state.eligibleCache = null;
   $('sectionTitle').textContent = state.selectedGenre.name;
   $('categoryDownloadBtn').hidden = false;
   renderGenres();
-  await loadGenrePage(true);
+  await loadGenrePage(true, true);
   const button = $('categoryDownloadBtn'); button.disabled = true;
   try { await loadEveryGenreTrack(); }
   finally { state.genreBusy = false; button.disabled = false; button.textContent = `${tr('downloadGenre')} (${pendingTracks().length})`; renderTracks(); }
 }
-async function loadGenrePage(reset) {
+async function loadGenrePage(reset, shouldRender = true) {
   if (state.loading || !state.selectedGenre) return;
   state.loading = true;
   if (reset) $('collections').innerHTML = `<div class="empty">${escapeHTML(tr('loadingTracks'))}</div>`;
@@ -138,17 +139,19 @@ async function loadGenrePage(reset) {
     const incoming = parseAlbums(response);
     const newAlbums = albums.filter(album => !state.albumIds.has(String(album.id)));
     newAlbums.forEach(album => state.albumIds.add(String(album.id)));
-    const known = new Set(state.tracks.map(track => track.id));
-    const additions = incoming.filter(track => !known.has(track.id));
+    const additions = incoming.filter(track => !state.trackIds.has(track.id));
+    additions.forEach(track => state.trackIds.add(track.id));
     state.tracks.push(...additions);
     if (additions.length) { state.tracksRevision += 1; state.eligibleCache = null; }
     if (incoming.length) {
-      const detection = await window.bpm.detectDownloaded(incoming, reset);
-      state.records = detection.records; state.recordsRevision += 1; state.eligibleCache = null;
+      const detection = await window.bpm.detectDownloaded(incoming, false);
+      if (detection.matches && Object.keys(detection.matches).length) {
+        Object.assign(state.records, detection.matches); state.recordsRevision += 1; state.eligibleCache = null;
+      }
     }
     state.skip += albums.length;
     state.hasMore = albums.length > 0 && newAlbums.length > 0;
-    renderTracks();
+    if (shouldRender) renderTracks();
   } catch (error) { toast(error.message, true); if (reset) $('collections').innerHTML = `<div class="empty">${escapeHTML(tr('loadFailed'))}</div>`; }
   finally { state.loading = false; }
 }
@@ -156,19 +159,20 @@ async function loadEveryGenreTrack() {
   const button = $('categoryDownloadBtn');
   while (state.hasMore) {
     button.textContent = `${tr('loadingGenre')} ${countLabel(state.tracks.length, 'track', 'tracks')}`;
-    await loadGenrePage(false);
-    await sleep(400);
+    await loadGenrePage(false, false);
+    await sleep(100);
   }
 }
 function genreJobQueued() { return state.queue.some(job => job.genreKey === state.selectedGenre?.key && !['done', 'error'].includes(job.status)); }
 function enqueueDownload(items) {
   if (!state.selectedGenre || !items.length) return;
   const collection = { id: `genre-${state.selectedGenre.key}`, slug: state.selectedGenre.key, title: state.selectedGenre.name, kind: 'genre' };
+  const songs = items.map(item => ({ id: item.id, label: `${item.artist} — ${item.title} [${item.version}]`, status: state.records[String(item.id)] ? 'existing' : item.downloadCount >= 3 ? 'limited' : 'pending', progress: state.records[String(item.id)] ? 100 : 0 }));
   state.queue.push({
     id: ++state.queueId, genreKey: state.selectedGenre.key, genreName: state.selectedGenre.name,
     collection, items, status: 'pending', current: tr('pending'), currentCount: 0,
     total: items.length, progress: 0, songProgress: 0,
-    songs: items.map(item => ({ id: item.id, label: `${item.artist} — ${item.title} [${item.version}]`, status: state.records[String(item.id)] ? 'existing' : item.downloadCount >= 3 ? 'limited' : 'pending', progress: state.records[String(item.id)] ? 100 : 0 }))
+    songs, songById: new Map(songs.map(song => [String(song.id), song]))
   });
   renderDownloadCenter(); processQueue(); renderTracks();
 }
@@ -201,10 +205,22 @@ function renderDownloadCenter() {
   const labels = { pending: tr('pending'), active: tr('active'), done: tr('done'), error: tr('error'), downloading: tr('downloading'), completed: tr('done'), existing: tr('existing'), limited: tr('limited') };
   $('queueRows').innerHTML = state.queue.map(job => {
     const percent = Math.max(0, Math.min(100, Math.round(job.progress * 100)));
-    return `<div class="queue-row job-row"><span class="queue-state ${job.status}">${labels[job.status]}</span><span>${escapeHTML(job.genreName)}</span><span title="${escapeHTML(job.current)}">${escapeHTML(job.current)}</span><span class="queue-progress"><progress value="${percent}" max="100"></progress><b>${job.currentCount}/${job.total} · ${percent}%</b></span></div>`;
+    return `<div class="queue-row job-row" data-job-id="${job.id}"><span class="queue-state ${job.status}">${labels[job.status]}</span><span>${escapeHTML(job.genreName)}</span><span class="job-current" title="${escapeHTML(job.current)}">${escapeHTML(job.current)}</span><span class="queue-progress"><progress value="${percent}" max="100"></progress><b>${job.currentCount}/${job.total} · ${percent}%</b></span></div>`;
   }).join('');
   $('monitorProgress').value = state.currentJob?.progress || 0;
   $('monitorCurrent').textContent = state.currentJob ? `${state.currentJob.genreName} — ${state.currentJob.current} — ${Math.round((state.currentJob.progress || 0) * 100)}%` : tr('queueFinished');
+}
+function updateActiveJobUI(job) {
+  const row = document.querySelector(`[data-job-id="${CSS.escape(String(job.id))}"]`);
+  const percent = Math.max(0, Math.min(100, Math.round(job.progress * 100)));
+  if (row) {
+    const current = row.querySelector('.job-current');
+    if (current) { current.textContent = job.current; current.title = job.current; }
+    const progress = row.querySelector('progress'); if (progress) progress.value = percent;
+    const count = row.querySelector('.queue-progress b'); if (count) count.textContent = `${job.currentCount}/${job.total} · ${percent}%`;
+  }
+  $('monitorProgress').value = job.progress || 0;
+  $('monitorCurrent').textContent = `${job.genreName} — ${job.current} — ${percent}%`;
 }
 function scheduleDownloadCenterRender(immediate = false) {
   if (immediate || performance.now() - state.downloadCenterLastRender >= 200) { renderDownloadCenter(); return; }
@@ -267,13 +283,14 @@ window.bpm.onProgress(info => {
     job.total = Number(info.total || job.total);
     job.songProgress = Number(info.songProgress || 0);
     job.progress = job.total ? Math.min(1, (job.currentCount + (info.phase === 'downloading' ? job.songProgress / 100 : 0)) / job.total) : 0;
-    const song = (job.songs || []).find(item => String(item.id) === String(info.itemId));
+    const song = job.songById?.get(String(info.itemId));
     if (song) {
       song.progress = info.phase === 'completed' ? 100 : job.songProgress;
       song.status = info.phase === 'completed' ? 'completed' : info.phase === 'error' ? 'error' : info.phase === 'downloading' ? 'downloading' : 'active';
     }
   }
-  scheduleDownloadCenterRender(info.phase !== 'downloading');
+  if (info.phase === 'downloading') updateActiveJobUI(job);
+  else scheduleDownloadCenterRender(true);
   if (info.phase === 'downloading') {
     updateTrackProgress(info.itemId, job.songProgress);
   } else if (info.phase === 'completed') {
@@ -297,7 +314,10 @@ const organizerText = {
   es: { already: 'Los archivos ya están organizados directamente por género.', confirm: (count, destination) => `Se moverán ${count} archivo(s) directamente a:\n${destination}/Genre\n\nNo se volverá a descargar música. Las listas se agruparán en “Serato Playlists” y se eliminarán las carpetas antiguas vacías. ¿Continuar?`, done: result => `${result.moved} archivo(s) organizados y ${result.foldersRemoved} carpeta(s) antigua(s) eliminadas.` }
 };
 $('organizeBtn').onclick = async () => { const button = $('organizeBtn'); const copy = organizerText[activeLanguage()] || organizerText.en; button.disabled = true; button.textContent = tr('analysis'); try { const preview = await window.bpm.organizePreview(); if (!preview.movable) { toast(copy.already); return; } if (!confirm(copy.confirm(preview.movable, preview.destination))) return; const result = await window.bpm.organizeByGenre(); state.records = result.records; state.recordsRevision += 1; state.eligibleCache = null; toast(copy.done(result)); renderTracks(); } catch (error) { toast(error.message, true); } finally { button.disabled = false; button.textContent = tr('organize'); } };
-$('search').oninput = () => { state.renderLimit = 250; renderTracks(); };
+$('search').oninput = () => {
+  clearTimeout(state.searchTimer);
+  state.searchTimer = setTimeout(() => { state.renderLimit = 100; renderTracks(); }, 100);
+};
 $('categoryDownloadBtn').onclick = downloadWholeGenre;
 $('monitorClose').onclick = () => { $('downloadMonitor').classList.toggle('collapsed'); $('monitorClose').textContent = $('downloadMonitor').classList.contains('collapsed') ? '⌃' : '⌄'; };
 $('clearFinishedBtn').onclick = () => { state.queue = state.queue.filter(job => job.status !== 'error'); renderDownloadCenter(); };

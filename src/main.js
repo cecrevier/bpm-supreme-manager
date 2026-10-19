@@ -3,12 +3,12 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const NodeID3 = require('node-id3');
+const { Worker } = require('node:worker_threads');
 
 const API = 'https://api.download.bpmsupreme.com/v1';
 const PARTITION = 'persist:bpm-supreme-account';
 let mainWindow;
 let loginWindow;
-let downloaderWindow;
 let downloadsActive = 0;
 let authWaiters = [];
 let authCheckInProgress = false;
@@ -215,25 +215,21 @@ async function apiJSON(apiPath, query = {}, authenticationRetry = false) {
 function safeName(value) {
   return String(value || 'Sans titre').normalize('NFKC').replace(/[\x00-\x1f\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').replace(/^[ .-]+|[ .-]+$/g, '').slice(0, 150) || 'Sans titre';
 }
-const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.aif', '.aiff', '.m4a', '.flac']);
 function fileFingerprint(value) {
   return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/\s+\(\d+\)$/i, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase();
 }
 async function buildAudioIndex(destination, refresh = false) {
   if (!refresh && audioIndexCache?.destination === destination) return audioIndexCache.files;
-  const files = new Map();
-  const visit = async folder => {
-    let entries;
-    try { entries = await fsp.readdir(folder, { withFileTypes: true }); } catch { return; }
-    for (const entry of entries) {
-      const fullPath = path.join(folder, entry.name);
-      if (entry.isDirectory()) { if (entry.name !== 'Serato Playlists') await visit(fullPath); continue; }
-      if (!entry.isFile() || entry.name.startsWith('.') || !AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
-      const fingerprint = fileFingerprint(path.basename(entry.name, path.extname(entry.name)));
-      if (fingerprint && !files.has(fingerprint)) files.set(fingerprint, fullPath);
-    }
-  };
-  await visit(destination);
+  const files = await new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'audio-index-worker.js'), { workerData: { destination } });
+    let settled = false;
+    worker.once('message', result => {
+      settled = true;
+      if (result.error) reject(new Error(result.error)); else resolve(new Map(result.entries));
+    });
+    worker.once('error', reject);
+    worker.once('exit', code => { if (!settled && code !== 0) reject(new Error(`Audio index worker stopped with code ${code}`)); });
+  });
   audioIndexCache = { destination, files };
   return files;
 }
@@ -241,17 +237,17 @@ async function detectDownloadedItems(items, refresh = false) {
   const current = await settings();
   const records = await readJSON(userFile('downloads.json'), {});
   const files = await buildAudioIndex(current.destination, refresh);
-  let matched = 0;
+  const matches = {};
   for (const item of items || []) {
     if (records[String(item.id)]?.filePath && fs.existsSync(records[String(item.id)].filePath)) continue;
     const stem = `${safeName(item.artist)} - ${safeName(item.title)} [${safeName(item.version)}]`;
     const filePath = files.get(fileFingerprint(stem));
     if (!filePath) continue;
     records[String(item.id)] = { mediaId: item.id, filePath, downloadedAt: new Date().toISOString(), collectionId: 'disk-scan', genre: normalizedGenre(item.genre) };
-    matched += 1;
+    matches[String(item.id)] = records[String(item.id)];
   }
-  if (matched) await writeJSON(userFile('downloads.json'), records);
-  return { records, matched, indexed: files.size };
+  if (Object.keys(matches).length) await writeJSON(userFile('downloads.json'), records);
+  return { matches, matched: Object.keys(matches).length, indexed: files.size };
 }
 function normalizedGenre(value) {
   const compact = String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').split(/[\/;]/)[0].trim();
@@ -403,14 +399,6 @@ async function writeSeratoPlaylist(items, collection, destination, records, genr
   await fsp.writeFile(playlistPath, `\uFEFF${lines.join('\n')}\n`, 'utf8');
   return playlistPath;
 }
-async function getDownloaderWindow() {
-  if (!downloaderWindow || downloaderWindow.isDestroyed()) {
-    downloaderWindow = new BrowserWindow({ show: false, webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false } });
-    downloaderWindow.on('closed', () => { downloaderWindow = null; });
-  }
-  await downloaderWindow.loadURL('https://app.bpmsupreme.com/');
-  return downloaderWindow;
-}
 async function downloadOne(item, collection, destination, records, genreName, progress = () => {}) {
   const fromLocation = collection.kind === 'genre' ? `/d/genres?genre=${encodeURIComponent(collection.slug || '')}` : collection.kind === 'curated' ? `/d/curated-set/${collection.id}` : `/d/exclusive-playlist/${collection.id}`;
   const result = await apiJSON(`media/${item.id}/download`, { from_location: fromLocation, from_library: 'music' });
@@ -424,11 +412,10 @@ async function downloadOne(item, collection, destination, records, genreName, pr
   const extension = path.extname(remoteName).replace('.', '') || 'mp3';
   const stem = `${safeName(item.artist)} - ${safeName(item.title)} [${safeName(item.version)}]`;
   const target = await uniquePath(collectionFolder, stem, extension);
-  // BPM's audio host rejects programmatic fetches, but accepts the same URL
-  // through Chromium's native download flow (the mechanism used by its site).
+  // Use Electron's native session download without navigating a hidden Chromium
+  // window for every song. Repeated hidden navigations created renderer processes
+  // and made the visible interface stutter during active downloads.
   const downloadSession = session.fromPartition(PARTITION);
-  const downloader = await getDownloaderWindow();
-  const downloaderContents = downloader.webContents;
   const downloadCopy = MAIN_MESSAGES[await mainLanguage()] || MAIN_MESSAGES.en;
   await new Promise((resolve, reject) => {
       let timeout;
@@ -436,8 +423,8 @@ async function downloadOne(item, collection, destination, records, genreName, pr
         clearTimeout(timeout);
         downloadSession.removeListener('will-download', onDownload);
       };
-      const onDownload = (_event, downloadItem, sourceContents) => {
-        if (sourceContents !== downloaderContents) return;
+      const onDownload = (_event, downloadItem) => {
+        if (downloadItem.getURL() !== signedURL) return;
         cleanup();
         downloadItem.setSavePath(target);
         let lastProgressAt = 0;
@@ -458,9 +445,7 @@ async function downloadOne(item, collection, destination, records, genreName, pr
         });
       };
       downloadSession.on('will-download', onDownload);
-      downloader.loadURL(signedURL, {
-        extraHeaders: 'Referer: https://app.bpmsupreme.com/\r\n'
-      }).catch(() => {});
+      downloadSession.downloadURL(signedURL, { headers: { Referer: 'https://app.bpmsupreme.com/' } });
       timeout = setTimeout(() => {
         cleanup();
         reject(new Error(downloadCopy.timeout));

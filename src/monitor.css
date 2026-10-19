@@ -65,6 +65,7 @@ main { grid-template-columns: 230px minmax(600px,1fr); }
 .collections-panel { border-right: 0; }
 .collection-grid { height: calc(100% - 151px); padding: 0; }
 .genre-track { grid-template-columns: 24px 1fr 130px 112px; min-height: 58px; padding-left: 24px; padding-right: 24px; }
+.genre-track { content-visibility: auto; contain-intrinsic-size: auto 58px; contain: layout paint style; }
 .track-download { padding: 7px 9px; font-size: 11px; }
 .track-download.active { border-color: #32d273; color: #74eba6; }
 .track-inline-progress { display: grid; gap: 3px; color: #32d273 !important; text-align: right; }
