@@ -69,6 +69,17 @@ function installAuthCookiePersistence() {
 async function settings() {
   return readJSON(userFile('settings.json'), { destination: defaultDestination(), downloadMode: 'balanced', language: 'system' });
 }
+const MAIN_MESSAGES = {
+  fr: { loginTitle: 'Connexion BPM Supreme', authRequired: 'Connexion BPM Supreme requise pour continuer.', rateLimit: seconds => `Limite BPM atteinte — reprise automatique dans ${seconds} s`, unknownError: 'Erreur inconnue', rateLimitPersistent: 'la limite de requêtes persiste après plusieurs reprises.', noLink: 'Aucun lien de téléchargement retourné.', interrupted: state => `Téléchargement du fichier interrompu (${state}).`, timeout: 'Le téléchargement du fichier a expiré.', chooseFolder: 'Choisir le dossier ou le disque', waitDownloads: 'Attendez la fin du centre de téléchargement avant de classer les fichiers.', invalidParameters: 'BPM Supreme a refusé les paramètres de téléchargement. Opération arrêtée pour éviter de répéter la même erreur.' },
+  en: { loginTitle: 'BPM Supreme Sign In', authRequired: 'BPM Supreme sign-in is required to continue.', rateLimit: seconds => `BPM rate limit reached — resuming automatically in ${seconds}s`, unknownError: 'Unknown error', rateLimitPersistent: 'the request limit is still active after several retries.', noLink: 'No download link was returned.', interrupted: state => `File download interrupted (${state}).`, timeout: 'The file download timed out.', chooseFolder: 'Choose a folder or drive', waitDownloads: 'Wait for the Download Center to finish before organizing files.', invalidParameters: 'BPM Supreme rejected the download parameters. The operation was stopped to avoid repeating the same error.' },
+  es: { loginTitle: 'Inicio de sesión de BPM Supreme', authRequired: 'Debes iniciar sesión en BPM Supreme para continuar.', rateLimit: seconds => `Límite de BPM alcanzado — reanudación automática en ${seconds} s`, unknownError: 'Error desconocido', rateLimitPersistent: 'el límite de solicitudes continúa activo después de varios intentos.', noLink: 'No se recibió ningún enlace de descarga.', interrupted: state => `Descarga del archivo interrumpida (${state}).`, timeout: 'La descarga del archivo agotó el tiempo de espera.', chooseFolder: 'Elegir una carpeta o unidad', waitDownloads: 'Espera a que termine el Centro de descargas antes de organizar los archivos.', invalidParameters: 'BPM Supreme rechazó los parámetros de descarga. La operación se detuvo para evitar repetir el mismo error.' }
+};
+async function mainLanguage() {
+  const selected = (await settings()).language || 'system';
+  const system = (app.getLocale() || 'en').slice(0, 2);
+  return selected === 'system' ? (MAIN_MESSAGES[system] ? system : 'en') : selected;
+}
+async function mt(key, ...args) { const language = await mainLanguage(); const value = MAIN_MESSAGES[language]?.[key] ?? MAIN_MESSAGES.en[key]; return typeof value === 'function' ? value(...args) : value; }
 const DOWNLOAD_MODES = {
   cautious: { delay: 8000, rateLimitMinimum: 120 },
   balanced: { delay: 3000, rateLimitMinimum: 60 },
@@ -117,7 +128,7 @@ async function finishLoginIfReady() {
 }
 async function openLoginWindow() {
   if (loginWindow && !loginWindow.isDestroyed()) { loginWindow.show(); loginWindow.focus(); return; }
-  loginWindow = new BrowserWindow({ width: 1050, height: 760, parent: mainWindow, title: 'Connexion BPM Supreme', webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false } });
+  loginWindow = new BrowserWindow({ width: 1050, height: 760, parent: mainWindow, title: await mt('loginTitle'), webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false } });
   let authenticated = false;
   const openDirectLoginForm = async () => {
     if (!loginWindow || loginWindow.isDestroyed() || !/^https:\/\/app\.bpmsupreme\.com\/d(?:[/?#]|$)/.test(loginWindow.webContents.getURL())) return;
@@ -144,7 +155,7 @@ async function openLoginWindow() {
     loginSession.cookies.removeListener('changed', cookieListener);
     loginWindow = null;
     mainWindow?.show(); mainWindow?.focus();
-    if (!authenticated && authWaiters.length) settleAuthWaiters(new Error('Connexion BPM Supreme requise pour continuer.'));
+    if (!authenticated && authWaiters.length) mt('authRequired').then(message => settleAuthWaiters(new Error(message)));
     mainWindow?.webContents.send('auth:changed');
   });
   await loginWindow.loadURL('https://app.bpmsupreme.com/login?redirect=%2Fd');
@@ -168,7 +179,7 @@ async function waitForRateLimit(seconds, apiPath) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('downloads:progress', {
         phase: 'waiting',
-        label: `Limite BPM atteinte — reprise automatique dans ${remaining} s`,
+        label: await mt('rateLimit', remaining),
         detail: apiPath
       });
     }
@@ -196,10 +207,10 @@ async function apiJSON(apiPath, query = {}, authenticationRetry = false) {
       await waitForAuthentication();
       return apiJSON(apiPath, query, true);
     }
-    if (!response.ok) throw new Error(`BPM Supreme ${apiPath} — HTTP ${response.status}: ${body.message || body.error || 'Erreur inconnue'}`);
+    if (!response.ok) throw new Error(`BPM Supreme ${apiPath} — HTTP ${response.status}: ${body.message || body.error || await mt('unknownError')}`);
     return body;
   }
-  throw new Error(`BPM Supreme ${apiPath} — la limite de requêtes persiste après plusieurs reprises.`);
+  throw new Error(`BPM Supreme ${apiPath} — ${await mt('rateLimitPersistent')}`);
 }
 function safeName(value) {
   return String(value || 'Sans titre').normalize('NFKC').replace(/[\x00-\x1f\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').replace(/^[ .-]+|[ .-]+$/g, '').slice(0, 150) || 'Sans titre';
@@ -404,7 +415,7 @@ async function downloadOne(item, collection, destination, records, genreName, pr
   const fromLocation = collection.kind === 'genre' ? `/d/genres?genre=${encodeURIComponent(collection.slug || '')}` : collection.kind === 'curated' ? `/d/curated-set/${collection.id}` : `/d/exclusive-playlist/${collection.id}`;
   const result = await apiJSON(`media/${item.id}/download`, { from_location: fromLocation, from_library: 'music' });
   const signedURL = result.data?.url || result.url;
-  if (!signedURL) throw new Error('Aucun lien de téléchargement retourné.');
+  if (!signedURL) throw new Error(await mt('noLink'));
   const genre = normalizedGenre(item.genre || genreName);
   const collectionFolder = genre ? path.join(destination, safeName(genre)) : path.join(destination, safeName(collection.title));
   await fsp.mkdir(collectionFolder, { recursive: true });
@@ -418,6 +429,7 @@ async function downloadOne(item, collection, destination, records, genreName, pr
   const downloadSession = session.fromPartition(PARTITION);
   const downloader = await getDownloaderWindow();
   const downloaderContents = downloader.webContents;
+  const downloadCopy = MAIN_MESSAGES[await mainLanguage()] || MAIN_MESSAGES.en;
   await new Promise((resolve, reject) => {
       let timeout;
       const cleanup = () => {
@@ -431,7 +443,7 @@ async function downloadOne(item, collection, destination, records, genreName, pr
         let lastProgressAt = 0;
         const reportProgress = () => {
           const now = Date.now();
-          if (now - lastProgressAt < 100) return;
+          if (now - lastProgressAt < 250) return;
           lastProgressAt = now;
           const receivedBytes = downloadItem.getReceivedBytes();
           const totalBytes = downloadItem.getTotalBytes();
@@ -442,7 +454,7 @@ async function downloadOne(item, collection, destination, records, genreName, pr
           downloadItem.removeListener('updated', reportProgress);
           if (state === 'completed') progress({ receivedBytes: downloadItem.getReceivedBytes(), totalBytes: downloadItem.getTotalBytes(), percent: 100 });
           if (state === 'completed') resolve();
-          else reject(new Error(`Téléchargement du fichier interrompu (${state}).`));
+          else reject(new Error(downloadCopy.interrupted(state)));
         });
       };
       downloadSession.on('will-download', onDownload);
@@ -451,7 +463,7 @@ async function downloadOne(item, collection, destination, records, genreName, pr
       }).catch(() => {});
       timeout = setTimeout(() => {
         cleanup();
-        reject(new Error('Le téléchargement du fichier a expiré.'));
+        reject(new Error(downloadCopy.timeout));
       }, 30000);
   });
   records[String(item.id)] = { mediaId: item.id, filePath: target, downloadedAt: new Date().toISOString(), collectionId: collection.id, genre };
@@ -492,7 +504,7 @@ ipcMain.handle('settings:update', async (_, patch) => {
 });
 ipcMain.handle('settings:destination', async () => {
   const current = await settings();
-  const result = await dialog.showOpenDialog(mainWindow, { title: 'Choisir le dossier ou le disque', defaultPath: current.destination, properties: ['openDirectory', 'createDirectory'] });
+  const result = await dialog.showOpenDialog(mainWindow, { title: await mt('chooseFolder'), defaultPath: current.destination, properties: ['openDirectory', 'createDirectory'] });
   if (!result.canceled && result.filePaths[0]) { current.destination = result.filePaths[0]; audioIndexCache = null; await writeJSON(userFile('settings.json'), current); }
   return current;
 });
@@ -500,7 +512,7 @@ ipcMain.handle('downloads:list', async () => readJSON(userFile('downloads.json')
 ipcMain.handle('downloads:detect', async (_, { items, refresh }) => detectDownloadedItems(items, refresh));
 ipcMain.handle('library:organize-preview', organizePreview);
 ipcMain.handle('library:organize', async () => {
-  if (downloadsActive) throw new Error('Attendez la fin du centre de téléchargement avant de classer les fichiers.');
+  if (downloadsActive) throw new Error(await mt('waitDownloads'));
   return organizeByGenre();
 });
 ipcMain.handle('api:get', async (_, { path: apiPath, query }) => apiJSON(apiPath, query));
@@ -525,7 +537,7 @@ ipcMain.handle('downloads:start', async (_, { collection, items, genreName, cate
       errors.push({ id: item.id, message: error.message });
       mainWindow.webContents.send('downloads:progress', { phase: 'error', itemId: item.id, current: completed + 1, total: pending.length, label, message: error.message, songProgress: 0 });
       if (/HTTP 400:\s*Invalid parameters/i.test(error.message)) {
-        throw new Error('BPM Supreme a refusé les paramètres de téléchargement. Opération arrêtée pour éviter de répéter la même erreur.');
+        throw new Error(await mt('invalidParameters'));
       }
     }
     completed += 1;

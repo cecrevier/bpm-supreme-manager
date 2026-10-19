@@ -41,6 +41,7 @@ BPM Supreme Manager was built to provide a simpler desktop workflow and automate
 - Pause and resume work after authentication expires.
 - Preserve the authenticated session using Electron's operating-system-backed encrypted storage.
 - Follow the system language by default, with English, French, and Spanish available in Settings.
+- Keep large genres responsive by rendering tracks in lightweight batches while retaining the complete searchable and downloadable catalogue.
 
 ## Installation
 
