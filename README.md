@@ -59,6 +59,21 @@ pnpm install
 pnpm start
 ```
 
+### Verify download responsiveness
+
+```bash
+pnpm test:performance
+pnpm test:downloads
+```
+
+The renderer test queues 20,000 synthetic tracks, exercises progress events and
+checks that all tracks remain queued while only 100 rows are rendered. The
+download integration test transfers temporary localhost fixtures sequentially
+through Electron's native download manager, verifies file contents and duplicate
+skipping, and checks preservation of a large download registry. It uses OpenSSL
+to generate its temporary localhost certificate. Neither test uses a BPM account
+or downloads music from the service.
+
 The application opens locally. Use **Connect** to authenticate on BPM Supreme's own website; credentials are never collected by this project.
 
 ## Build packages

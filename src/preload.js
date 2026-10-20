@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('bpm', {
   login: () => ipcRenderer.invoke('auth:login'),
   logout: () => ipcRenderer.invoke('auth:logout'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
+  getVersion: () => ipcRenderer.invoke('app:version'),
   updateSettings: patch => ipcRenderer.invoke('settings:update', patch),
   chooseDestination: () => ipcRenderer.invoke('settings:destination'),
   getDownloaded: () => ipcRenderer.invoke('downloads:list'),

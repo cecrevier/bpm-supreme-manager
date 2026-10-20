@@ -13,6 +13,14 @@ let downloadsActive = 0;
 let authWaiters = [];
 let authCheckInProgress = false;
 let audioIndexCache = null;
+const audioIndexInFlight = new Map();
+const ownsInstance = app.requestSingleInstanceLock();
+if (!ownsInstance) app.quit();
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show(); mainWindow.focus();
+});
 const AUTH_COOKIE_NAMES = ['CloudFront-Key-Pair-Id', 'CloudFront-Policy', 'CloudFront-Signature'];
 
 const userFile = name => path.join(app.getPath('userData'), name);
@@ -80,6 +88,11 @@ async function mainLanguage() {
   return selected === 'system' ? (MAIN_MESSAGES[system] ? system : 'en') : selected;
 }
 async function mt(key, ...args) { const language = await mainLanguage(); const value = MAIN_MESSAGES[language]?.[key] ?? MAIN_MESSAGES.en[key]; return typeof value === 'function' ? value(...args) : value; }
+const DOWNLOAD_BUSY_MESSAGES = {
+  fr: 'Un téléchargement est déjà en cours. Ajoutez les autres titres dans le centre de téléchargement.',
+  en: 'A download is already running. Add other tracks to the Download Center.',
+  es: 'Ya hay una descarga en curso. Añade los demás temas al Centro de descargas.'
+};
 const DOWNLOAD_MODES = {
   cautious: { delay: 8000, rateLimitMinimum: 120 },
   balanced: { delay: 3000, rateLimitMinimum: 60 },
@@ -219,8 +232,9 @@ function fileFingerprint(value) {
   return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/\s+\(\d+\)$/i, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase();
 }
 async function buildAudioIndex(destination, refresh = false) {
+  if (audioIndexInFlight.has(destination)) return audioIndexInFlight.get(destination);
   if (!refresh && audioIndexCache?.destination === destination) return audioIndexCache.files;
-  const files = await new Promise((resolve, reject) => {
+  const pending = new Promise((resolve, reject) => {
     const worker = new Worker(path.join(__dirname, 'audio-index-worker.js'), { workerData: { destination } });
     let settled = false;
     worker.once('message', result => {
@@ -228,10 +242,15 @@ async function buildAudioIndex(destination, refresh = false) {
       if (result.error) reject(new Error(result.error)); else resolve(new Map(result.entries));
     });
     worker.once('error', reject);
-    worker.once('exit', code => { if (!settled && code !== 0) reject(new Error(`Audio index worker stopped with code ${code}`)); });
+    worker.once('exit', code => { if (!settled) reject(new Error(`Audio index worker stopped without a result (code ${code})`)); });
+  }).then(files => {
+    audioIndexCache = { destination, files };
+    return files;
+  }).finally(() => {
+    audioIndexInFlight.delete(destination);
   });
-  audioIndexCache = { destination, files };
-  return files;
+  audioIndexInFlight.set(destination, pending);
+  return pending;
 }
 async function detectDownloadedItems(items, refresh = false) {
   const current = await settings();
@@ -404,6 +423,7 @@ async function downloadOne(item, collection, destination, records, genreName, pr
   const result = await apiJSON(`media/${item.id}/download`, { from_location: fromLocation, from_library: 'music' });
   const signedURL = result.data?.url || result.url;
   if (!signedURL) throw new Error(await mt('noLink'));
+  const requestedURL = new URL(signedURL).href;
   const genre = normalizedGenre(item.genre || genreName);
   const collectionFolder = genre ? path.join(destination, safeName(genre)) : path.join(destination, safeName(collection.title));
   await fsp.mkdir(collectionFolder, { recursive: true });
@@ -424,7 +444,9 @@ async function downloadOne(item, collection, destination, records, genreName, pr
         downloadSession.removeListener('will-download', onDownload);
       };
       const onDownload = (_event, downloadItem) => {
-        if (downloadItem.getURL() !== signedURL) return;
+        // A granted BPM URL can redirect to its audio host before will-download.
+        // Match the original request in the chain so we still set its save path.
+        if (![downloadItem.getURL(), ...downloadItem.getURLChain()].some(url => new URL(url).href === requestedURL)) return;
         cleanup();
         downloadItem.setSavePath(target);
         let lastProgressAt = 0;
@@ -459,7 +481,7 @@ async function downloadOne(item, collection, destination, records, genreName, pr
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1380, height: 850, minWidth: 1050, minHeight: 650,
-    title: 'BPM Supreme Manager',
+    title: `BPM Supreme Manager ${app.getVersion()}`,
     backgroundColor: '#0d0e11',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false }
   });
@@ -467,6 +489,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (!ownsInstance) return;
   await restoreAuthCookies();
   installAuthCookiePersistence();
   createWindow();
@@ -481,6 +504,7 @@ ipcMain.handle('auth:login', async () => {
 });
 ipcMain.handle('auth:logout', async () => { await clearPersistedAuthentication(); await session.fromPartition(PARTITION).clearStorageData(); return { connected: false }; });
 ipcMain.handle('settings:get', async () => settings());
+ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('settings:update', async (_, patch) => {
   const current = await settings();
   if (patch.downloadMode && DOWNLOAD_MODES[patch.downloadMode]) current.downloadMode = patch.downloadMode;
@@ -503,6 +527,7 @@ ipcMain.handle('library:organize', async () => {
 ipcMain.handle('api:get', async (_, { path: apiPath, query }) => apiJSON(apiPath, query));
 ipcMain.handle('file:reveal', async (_, filePath) => shell.showItemInFolder(filePath));
 ipcMain.handle('downloads:start', async (_, { collection, items, genreName, categoryName }) => {
+  if (downloadsActive) throw new Error(DOWNLOAD_BUSY_MESSAGES[await mainLanguage()] || DOWNLOAD_BUSY_MESSAGES.en);
   downloadsActive += 1;
   try {
   const current = await settings();
@@ -531,6 +556,11 @@ ipcMain.handle('downloads:start', async (_, { collection, items, genreName, cate
     await sleep((await downloadMode()).delay);
   }
   const playlist = await writeSeratoPlaylist(items, collection, current.destination, records, genreName || categoryName);
-  return { completed: completed - errors.length, skipped: items.length - pending.length, errors, records, playlist };
+  const jobRecords = {};
+  for (const item of items) {
+    const record = records[String(item.id)];
+    if (record) jobRecords[String(item.id)] = record;
+  }
+  return { completed: completed - errors.length, skipped: items.length - pending.length, errors, records: jobRecords, playlist };
   } finally { downloadsActive = Math.max(0, downloadsActive - 1); }
 });

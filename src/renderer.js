@@ -4,7 +4,7 @@ const state = {
   skip: 0, pageSize: 50, hasMore: false, loading: false, albumIds: new Set(),
   queue: [], queueBusy: false, currentJob: null, queueId: 0, genreBusy: false,
   tracksRevision: 0, recordsRevision: 0, eligibleCache: null, renderLimit: 100, downloadCenterFrame: 0, downloadCenterLastRender: 0,
-  trackIds: new Set(), searchTimer: 0
+  trackIds: new Set(), searchTimer: 0, trackRows: new Map()
 };
 
 const $ = id => document.getElementById(id);
@@ -33,6 +33,10 @@ function applyLanguage() {
   document.querySelectorAll('[data-i18n-placeholder]').forEach(element => { element.placeholder = tr(element.dataset.i18nPlaceholder); });
   document.querySelectorAll('[data-i18n-title]').forEach(element => { element.title = tr(element.dataset.i18nTitle); });
   document.querySelectorAll('[data-i18n-aria-label]').forEach(element => { element.setAttribute('aria-label', tr(element.dataset.i18nAriaLabel)); });
+  if (state.settings.destination) {
+    $('destinationPath').textContent = state.settings.destination;
+    $('destinationPathSummary').textContent = state.settings.destination;
+  }
   if (state.selectedGenre) $('sectionTitle').textContent = state.selectedGenre.name;
   renderAuth(); renderTracks(); renderDownloadCenter();
 }
@@ -94,17 +98,20 @@ function renderTracks() {
   const chosenIds = new Set(eligibleTracks().map(track => track.id));
   const titleCount = new Set(visible.map(track => track.albumId || `${track.artist}-${track.title}`)).size;
   $('collectionCount').textContent = `${countLabel(titleCount, 'track', 'tracks')} • ${countLabel(visible.length, 'version', 'versions')}`;
+  state.trackRows.clear();
   if (!state.selectedGenre) { $('collections').innerHTML = `<div class="empty">${escapeHTML(tr('chooseGenreTracks'))}</div>`; return; }
   const renderedTracks = visible.slice(0, state.renderLimit);
   const rows = renderedTracks.map(track => {
     const done = Boolean(state.records[String(track.id)]); const limited = track.downloadCount >= 3; const wanted = chosenIds.has(track.id);
     const queuedSong = state.queue.map(job => job.songById?.get(String(track.id))).find(song => song && !['existing', 'limited'].includes(song.status));
-    const action = queuedSong ? `<span class="track-inline-progress" data-progress-id="${track.id}"><progress value="${queuedSong.progress}" max="100"></progress><b>${Math.round(queuedSong.progress)}%</b></span>` : `<button class="track-download" data-download-id="${track.id}" ${done || limited ? 'disabled' : ''}>${done ? '✓' : tr('download')}</button>`;
+    const active = queuedSong && ['active', 'downloading'].includes(queuedSong.status);
+    const action = done ? '<button class="track-download" disabled>✓</button>' : active ? `<span class="track-inline-progress" data-progress-id="${track.id}"><progress value="${queuedSong.progress}" max="100"></progress><b>${Math.round(queuedSong.progress)}%</b></span>` : queuedSong ? `<span class="track-queued">${escapeHTML(tr('queued'))}</span>` : `<button class="track-download" data-download-id="${track.id}" ${limited ? 'disabled' : ''}>${tr('download')}</button>`;
     const status = done ? tr('alreadyDownloaded') : limited ? `${tr('limited')} 3/3` : queuedSong ? tr('queued') : wanted ? `${track.downloadCount}/3 • ${tr('selected')}` : tr('unselectedVersion').replace(/^—\s*/, '');
     return `<div class="track genre-track ${done ? 'downloaded-frame' : queuedSong ? 'queued-frame' : wanted && !limited ? 'queued-frame' : ''}" data-track-id="${track.id}"><div class="${done ? 'downloaded' : limited ? 'limit' : ''}">${done ? '●' : limited ? '!' : queuedSong ? '↓' : wanted ? '↓' : '–'}</div><div><h5>${escapeHTML(track.title)}</h5><p>${escapeHTML(track.artist)} • ${escapeHTML(track.version)} • ${escapeHTML(track.genre)}</p></div><span class="${done ? 'downloaded' : limited ? 'limit' : ''}">${escapeHTML(status)}</span>${action}</div>`;
   }).join('');
   const more = visible.length > renderedTracks.length ? `<button class="load-more" id="loadMoreBtn">${escapeHTML(tr('loadMore'))} (${visible.length - renderedTracks.length})</button>` : '';
   $('collections').innerHTML = rows ? rows + more : `<div class="empty">${escapeHTML(tr('noTracks'))}</div>`;
+  $('collections').querySelectorAll('[data-track-id]').forEach(row => state.trackRows.set(row.dataset.trackId, row));
   document.querySelectorAll('[data-download-id]').forEach(button => { button.onclick = () => downloadSingleTrack(Number(button.dataset.downloadId)); });
   if ($('loadMoreBtn')) $('loadMoreBtn').onclick = () => { state.renderLimit += 100; renderTracks(); };
 }
@@ -124,9 +131,9 @@ async function selectGenre(key) {
   $('sectionTitle').textContent = state.selectedGenre.name;
   $('categoryDownloadBtn').hidden = false;
   renderGenres();
-  await loadGenrePage(true, true);
   const button = $('categoryDownloadBtn'); button.disabled = true;
-  try { await loadEveryGenreTrack(); }
+  try { await loadGenrePage(true, true); await loadEveryGenreTrack(); }
+  catch (error) { toast(error.message, true); }
   finally { state.genreBusy = false; button.disabled = false; button.textContent = `${tr('downloadGenre')} (${pendingTracks().length})`; renderTracks(); }
 }
 async function loadGenrePage(reset, shouldRender = true) {
@@ -151,14 +158,15 @@ async function loadGenrePage(reset, shouldRender = true) {
     }
     state.skip += albums.length;
     state.hasMore = albums.length > 0 && newAlbums.length > 0;
+    if (!$('search').value.trim()) $('collectionCount').textContent = `${countLabel(state.albumIds.size, 'track', 'tracks')} • ${countLabel(state.tracks.length, 'version', 'versions')}`;
     if (shouldRender) renderTracks();
-  } catch (error) { toast(error.message, true); if (reset) $('collections').innerHTML = `<div class="empty">${escapeHTML(tr('loadFailed'))}</div>`; }
+  } catch (error) { if (reset) $('collections').innerHTML = `<div class="empty">${escapeHTML(tr('loadFailed'))}</div>`; throw error; }
   finally { state.loading = false; }
 }
 async function loadEveryGenreTrack() {
   const button = $('categoryDownloadBtn');
   while (state.hasMore) {
-    button.textContent = `${tr('loadingGenre')} ${countLabel(state.tracks.length, 'track', 'tracks')}`;
+    button.textContent = `${tr('loadingGenre')} ${countLabel(state.albumIds.size, 'track', 'tracks')}`;
     await loadGenrePage(false, false);
     await sleep(100);
   }
@@ -174,7 +182,9 @@ function enqueueDownload(items) {
     total: items.length, progress: 0, songProgress: 0,
     songs, songById: new Map(songs.map(song => [String(song.id), song]))
   });
-  renderDownloadCenter(); processQueue(); renderTracks();
+  renderDownloadCenter(); renderTracks();
+  // Paint the queued state before crossing IPC or starting any download work.
+  requestAnimationFrame(() => { processQueue(); });
 }
 function downloadSingleTrack(id) {
   const track = state.tracks.find(item => item.id === id);
@@ -187,12 +197,15 @@ async function downloadWholeGenre() {
   if (!state.selectedGenre || state.genreBusy || genreJobQueued()) return;
   state.genreBusy = true; const button = $('categoryDownloadBtn'); button.disabled = true;
   try {
+    button.textContent = tr('preparing');
+    await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
     await loadEveryGenreTrack();
-    const items = eligibleTracks();
+    const items = pendingTracks();
     if (!items.length) { toast(tr('noEligible'), true); return; }
     enqueueDownload(items);
     toast(`${countLabel(items.length, 'track', 'tracks')} — ${state.selectedGenre.name}`);
-  } finally { state.genreBusy = false; button.disabled = false; button.textContent = `${tr('downloadGenre')} (${pendingTracks().length})`; }
+  } catch (error) { toast(error.message, true); }
+  finally { state.genreBusy = false; button.disabled = false; button.textContent = `${tr('downloadGenre')} (${pendingTracks().length})`; }
 }
 function renderDownloadCenter() {
   if (state.downloadCenterFrame) clearTimeout(state.downloadCenterFrame);
@@ -229,9 +242,14 @@ function scheduleDownloadCenterRender(immediate = false) {
   state.downloadCenterFrame = setTimeout(() => renderDownloadCenter(), delay);
 }
 function updateTrackProgress(itemId, progressValue, completed = false) {
-  const row = document.querySelector(`[data-track-id="${CSS.escape(String(itemId))}"]`);
+  const row = state.trackRows.get(String(itemId));
   if (!row) return;
-  const progress = row.querySelector(`[data-progress-id="${CSS.escape(String(itemId))}"]`);
+  let progress = row.querySelector('.track-inline-progress');
+  if (!completed && !progress && !state.records[String(itemId)]) {
+    row.lastElementChild.outerHTML = `<span class="track-inline-progress" data-progress-id="${Number(itemId)}"><progress value="0" max="100"></progress><b>0%</b></span>`;
+    progress = row.lastElementChild;
+    row.children[2].textContent = tr('downloading');
+  }
   if (progress) {
     progress.querySelector('progress').value = progressValue;
     progress.querySelector('b').textContent = `${Math.round(progressValue)}%`;
@@ -257,7 +275,7 @@ async function processQueue() {
       state.currentJob = job; job.status = 'active'; job.current = tr('preparing'); renderDownloadCenter();
       try {
         const result = await window.bpm.download({ collection: job.collection, items: job.items, genreName: job.genreName });
-        state.records = result.records; state.recordsRevision += 1; state.eligibleCache = null; job.status = result.errors.length ? 'error' : 'done'; job.current = result.errors.length ? `${result.errors.length} ${tr('error')}` : `${result.completed} ${tr('done')}`;
+        Object.assign(state.records, result.records); state.recordsRevision += 1; state.eligibleCache = null; job.status = result.errors.length ? 'error' : 'done'; job.current = result.errors.length ? `${result.errors.length} ${tr('error')}` : `${result.completed} ${tr('done')}`;
       } catch (error) { job.status = 'error'; job.current = error.message; }
       job.currentCount = job.total; job.progress = 1; renderDownloadCenter(); renderTracks();
       if (job.status === 'done') removeFinishedJob(job);
@@ -265,6 +283,11 @@ async function processQueue() {
   } finally { state.currentJob = null; state.queueBusy = false; renderDownloadCenter(); }
 }
 async function initialize() {
+  if (window.bpm.getVersion) {
+    const version = await window.bpm.getVersion();
+    $('appVersion').textContent = `v${version}`;
+    document.title = `BPM Supreme Manager ${version}`;
+  }
   state.settings = await window.bpm.getSettings(); state.records = await window.bpm.getDownloaded(); state.recordsRevision += 1;
   $('destinationPath').textContent = state.settings.destination;
   $('destinationPathSummary').textContent = state.settings.destination;
@@ -289,9 +312,8 @@ window.bpm.onProgress(info => {
       song.status = info.phase === 'completed' ? 'completed' : info.phase === 'error' ? 'error' : info.phase === 'downloading' ? 'downloading' : 'active';
     }
   }
-  if (info.phase === 'downloading') updateActiveJobUI(job);
-  else scheduleDownloadCenterRender(true);
-  if (info.phase === 'downloading') {
+  updateActiveJobUI(job);
+  if (info.phase === 'starting' || info.phase === 'downloading') {
     updateTrackProgress(info.itemId, job.songProgress);
   } else if (info.phase === 'completed') {
     if (info.filePath) state.records[String(info.itemId)] = { filePath: info.filePath };

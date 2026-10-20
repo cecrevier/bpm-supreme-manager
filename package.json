@@ -1,12 +1,14 @@
 {
   "name": "bpm-supreme-manager",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Cross-platform desktop manager for organizing a licensed BPM Supreme music library",
   "main": "src/main.js",
   "author": "CECREVIER Networks",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
+    "test:performance": "electron tests/renderer-performance.cjs",
+    "test:downloads": "electron tests/download-engine.cjs",
     "dist:mac": "electron-builder --mac dmg zip",
     "dist:win": "electron-builder --win nsis portable",
     "dist:linux": "electron-builder --linux AppImage deb"
